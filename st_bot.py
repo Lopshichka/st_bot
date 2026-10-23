@@ -1,10 +1,12 @@
 import asyncio
 import logging
 import os
+import threading
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, LabeledPrice, PreCheckoutQuery
+from flask import Flask
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -13,13 +15,25 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+app = Flask(__name__)
+
+
+@app.route("/")
+def health():
+    return "Bot is running", 200
+
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
 
 @dp.message(Command("pay"))
 async def cmd_buy(message: Message):
     await bot.send_invoice(
         chat_id=message.chat.id,
         title="payment",
-        description="",
+        description="TELEGRAM_CONFIRM",
         payload="tg_confirm",
         currency="XTR",
         prices=[LabeledPrice(label="Premium", amount=1)],
@@ -41,6 +55,7 @@ async def payment_received(message: Message):
 
 async def main():
     logging.basicConfig(level=logging.INFO)
+    threading.Thread(target=run_flask, daemon=True).start()
     await dp.start_polling(bot)
 
 
