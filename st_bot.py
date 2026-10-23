@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import threading
-//st_
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, LabeledPrice, PreCheckoutQuery
