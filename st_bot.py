@@ -12,6 +12,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("Не найден BOT_TOKEN. Добавьте его в переменные окружения.")
 
+invoice_messages = {}
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -30,7 +31,7 @@ def run_flask():
 
 @dp.message(Command("pay"))
 async def cmd_buy(message: Message):
-    await bot.send_invoice(
+    sent = await bot.send_invoice(
         chat_id=message.chat.id,
         title="payment",
         description="TELEGRAM_CONFIRM",
@@ -39,6 +40,7 @@ async def cmd_buy(message: Message):
         prices=[LabeledPrice(label="Premium", amount=1)],
         provider_token="",
     )
+    invoice_messages[message.from_user.id] = sent.message_id
 
 
 @dp.pre_checkout_query()
@@ -50,7 +52,15 @@ async def process_pre_checkout(query: PreCheckoutQuery):
 async def payment_received(message: Message):
     payment = message.successful_payment
     print("charge_id:", payment.telegram_payment_charge_id)
-    await message.answer("🎆successful payment🎆")
+    
+    msg_id = invoice_messages.pop(message.from_user.id, None)
+    if msg_id:
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=msg_id)
+        except Exception as e:
+            print(f"Не удалось удалить сообщение со счётом: {e}")
+    
+    await message.answer("successful payment")
 
 
 async def main():
