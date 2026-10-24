@@ -2,80 +2,310 @@ import asyncio
 import logging
 import os
 import threading
+import json
+import random
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, LabeledPrice, PreCheckoutQuery
+from aiogram.types import (
+    Message, BotCommand, LabeledPrice, PreCheckoutQuery,
+    CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+)
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from flask import Flask
-#
+from cryptography.fernet import Fernet
+
+# ============================================================
+# КОНФИГ
+# ============================================================
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("Не найден BOT_TOKEN. Добавьте его в переменные окружения.")
+    raise ValueError("Не найден BOT_TOKEN")
 
-invoice_messages = {}
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+# Ключ шифрования (один раз сгенерируй и сохрани в Render Environment!)
+# from cryptography.fernet import Fernet
+# print(Fernet.generate_key().decode())
+ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY")
+if not ENCRYPTION_KEY:
+    raise ValueError("Не найден ENCRYPTION_KEY")
+
+cipher = Fernet(ENCRYPTION_KEY.encode())
+
+# Промт для нейросети (ЗАПОЛНИ САМ)
+SYSTEM_PROMPT = "Ты — эмпатичный психолог. Слушай пользователя, задавай уточняющие вопросы, помогай разобраться в проблеме. Отвечай тепло и по делу."
+
+# Прайсы: (токены, звёзды)
+PRICES = [
+    (10, 5),
+    (30, 13),
+    (50, 20),
+    (100, 45),
+    (200, 85),
+    (500, 230),
+]
+
+# Путь к папке с зашифрованными историями
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# ============================================================
+# ХРАНИЛИЩЕ (JSON-файлы)
+# ============================================================
+
+def user_file(user_id: int) -> str:
+    return os.path.join(DATA_DIR, f"user_{user_id}.json")
+
+def load_user(user_id: int) -> dict:
+    path = user_file(user_id)
+    if not os.path.exists(path):
+        return {"tokens": 0, "history": []}
+    try:
+        with open(path, "rb") as f:
+            encrypted = f.read()
+        decrypted = cipher.decrypt(encrypted)
+        return json.loads(decrypted.decode("utf-8"))
+    except Exception:
+        return {"tokens": 0, "history": []}
+
+def save_user(user_id: int, data: dict):
+    path = user_file(user_id)
+    raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    encrypted = cipher.encrypt(raw)
+    with open(path, "wb") as f:
+        f.write(encrypted)
+
+# ============================================================
+# FLASK (для Render)
+# ============================================================
 
 app = Flask(__name__)
-
 
 @app.route("/")
 def health():
     return "Bot is running", 200
 
-
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, threaded=True)
 
+# ============================================================
+# FSM
+# ============================================================
 
-@dp.message(F.dice)
-async def handle_user_dice(message: Message):
-    if message.dice.emoji == "🎲":
-        value = message.dice.value
-        await asyncio.sleep(3.5)
-        await message.answer(f"Вам выпало {value}")
+class ChatStates(StatesGroup):
+    chatting = State()
 
+# ============================================================
+# КЛАВИАТУРЫ
+# ============================================================
 
-@dp.message(Command("pay"))
-async def cmd_buy(message: Message):
-    sent = await bot.send_invoice(
-        chat_id=message.chat.id,
-        title="payment",
-        description="TELEGRAM_CONFIRM",
-        payload="tg_confirm",
+def profile_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Купить токены", callback_data="buy_tokens")]
+    ])
+
+def prices_keyboard():
+    buttons = []
+    for tokens, stars in PRICES:
+        buttons.append([InlineKeyboardButton(
+            text=f"{tokens} токенов — {stars}⭐",
+            callback_data=f"buy_{tokens}_{stars}"
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_profile")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ============================================================
+# /start И /profile
+# ============================================================
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    await message.answer(
+        "Привет! Я бот-психолог.\n\n"
+        "Команды:\n"
+        "/profile — твой профиль и баланс токенов\n"
+        "/information — информация о боте\n\n"
+        "Просто напиши мне что-нибудь, и я отвечу. Одно сообщение = один токен."
+    )
+
+@dp.message(Command("information"))
+async def cmd_information(message: Message):
+    await message.answer(
+        "Этот бот — AI-психолог.\n\n"
+        "Одно сообщение = 1 токен.\n"
+        "Купить токены можно в /profile.\n\n"
+        "⚠️ Бот не заменяет живого специалиста. В кризисной ситуации обратись на горячую линию психологической помощи."
+    )
+
+@dp.message(Command("profile"))
+async def cmd_profile(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    data = load_user(user_id)
+    tokens = data["tokens"]
+
+    text = (
+        f"👤 Имя: {message.from_user.full_name}\n"
+        f"🆔 ID: {user_id}\n"
+        f"🪙 Токенов: {tokens}\n\n"
+        f"Одно сообщение = 1 токен."
+    )
+    await message.answer(text, reply_markup=profile_keyboard())
+    await state.clear()
+
+# ============================================================
+# CALLBACK: ПОКУПКА ТОКЕНОВ
+# ============================================================
+
+@dp.callback_query(F.data == "buy_tokens")
+async def cb_buy_tokens(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "Выбери пакет токенов:",
+        reply_markup=prices_keyboard()
+    )
+
+@dp.callback_query(F.data.startswith("buy_") & ~F.data.startswith("buy_tokens"))
+async def cb_select_package(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split("_")
+    tokens = int(parts[1])
+    stars = int(parts[2])
+
+    await callback.message.delete()
+    await callback.bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title=f"{tokens} токенов",
+        description=f"Пакет токенов для общения с ботом",
+        payload=f"tokens_{tokens}",
         currency="XTR",
-        prices=[LabeledPrice(label="Premium", amount=1)],
+        prices=[LabeledPrice(label=f"{tokens} токенов", amount=stars)],
         provider_token="",
     )
-    invoice_messages[message.from_user.id] = sent.message_id
 
+@dp.callback_query(F.data == "back_to_profile")
+async def cb_back_to_profile(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.delete()
+
+    user_id = callback.from_user.id
+    data = load_user(user_id)
+    tokens = data["tokens"]
+
+    text = (
+        f"👤 Имя: {callback.from_user.full_name}\n"
+        f"🆔 ID: {user_id}\n"
+        f"🪙 Токенов: {tokens}\n\n"
+        f"Одно сообщение = 1 токен."
+    )
+    await callback.bot.send_message(user_id, text, reply_markup=profile_keyboard())
+
+# ============================================================
+# ОПЛАТА
+# ============================================================
 
 @dp.pre_checkout_query()
 async def process_pre_checkout(query: PreCheckoutQuery):
     await query.answer(ok=True)
 
-
 @dp.message(F.successful_payment)
 async def payment_received(message: Message):
     payment = message.successful_payment
-    print("charge_id:", payment.telegram_payment_charge_id)
+    payload = payment.invoice_payload
 
-    msg_id = invoice_messages.pop(message.from_user.id, None)
-    if msg_id:
-        try:
-            await bot.delete_message(chat_id=message.chat.id, message_id=msg_id)
-        except Exception as e:
-            print(f"Не удалось удалить сообщение со счётом: {e}")
+    if payload.startswith("tokens_"):
+        tokens_to_add = int(payload.split("_")[1])
+        user_id = message.from_user.id
+        data = load_user(user_id)
+        data["tokens"] += tokens_to_add
+        save_user(user_id, data)
 
-    await message.answer("successful payment")
+        text = (
+            f"✅ Оплата прошла!\n"
+            f"Начислено: {tokens_to_add} токенов\n"
+            f"Текущий баланс: {data['tokens']}\n\n"
+            f"👤 {message.from_user.full_name}\n"
+            f"🆔 {user_id}"
+        )
+        await message.answer(text, reply_markup=profile_keyboard())
 
+# ============================================================
+# ОБРАБОТКА СООБЩЕНИЙ (ПСИХОЛОГ)
+# ============================================================
+
+@dp.message(F.text & ~F.text.startswith("/"))
+async def handle_message(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    text = message.text
+
+    # Проверка на кризисные сообщения (ОБЯЗАТЕЛЬНО)
+    crisis_words = ["суицид", "убить себя", "не хочу жить", "покончить", "самоубий"]
+    if any(w in text.lower() for w in crisis_words):
+        await message.answer(
+            "Мне очень жаль, что тебе сейчас так тяжело.\n\n"
+            "Пожалуйста, обратись к живому специалисту. Это важно.\n\n"
+            "📞 Горячая линия психологической помощи (РФ): 8-800-2000-122\n"
+            "📞 Экстренная помощь: 112"
+        )
+        return
+
+    # Загружаем данные пользователя
+    data = load_user(user_id)
+
+    # Проверка токенов ДО обращения к API
+    if data["tokens"] <= 0:
+        await message.answer(
+            "❌ У тебя закончились токены.\n\n"
+            "Пополни баланс в /profile, чтобы продолжить общение."
+        )
+        return
+
+    # Списываем токен
+    data["tokens"] -= 1
+
+    # Добавляем сообщение в историю
+    data["history"].append({"role": "user", "content": text})
+
+    # Ограничиваем историю (последние 100 сообщений)
+    if len(data["history"]) > 100:
+        data["history"] = data["history"][-100:]
+
+    save_user(user_id, data)
+
+    # ЗАГЛУШКА: здесь будет вызов API нейросети
+    # Пока просто эхо-ответ
+    ai_response = f"[Заглушка] Ты написал: {text}. Здесь будет ответ нейросети."
+
+    # Сохраняем ответ в историю
+    data = load_user(user_id)
+    data["history"].append({"role": "assistant", "content": ai_response})
+    save_user(user_id, data)
+
+    await message.answer(ai_response)
+
+# ============================================================
+# МЕНЮ КОМАНД
+# ============================================================
+
+async def set_commands():
+    commands = [
+        BotCommand(command="start", description="Начать"),
+        BotCommand(command="profile", description="Профиль и токены"),
+        BotCommand(command="information", description="Информация"),
+    ]
+    await bot.set_my_commands(commands)
+
+# ============================================================
+# ЗАПУСК
+# ============================================================
 
 async def main():
     logging.basicConfig(level=logging.INFO)
     threading.Thread(target=run_flask, daemon=True).start()
+    await set_commands()
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
