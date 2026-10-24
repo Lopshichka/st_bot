@@ -26,14 +26,15 @@ def health():
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, threaded=True)
+    app.run(host="0.0.0.0", port=port)
 
 
 @dp.message(F.dice)
 async def handle_user_dice(message: Message):
-    value = message.dice.value
-    emoji = message.dice.emoji
-    await message.answer(f"Вы выкинули {emoji} со значением {value}")
+    if message.dice.emoji == "🎲":
+        value = message.dice.value
+        await asyncio.sleep(3.5)
+        await message.answer(f"Вам выпало {value}")
 
 
 @dp.message(Command("pay"))
