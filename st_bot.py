@@ -29,6 +29,14 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    dice_message = await message.answer_dice(emoji="🎲")
+    value = dice_message.dice.value
+    await asyncio.sleep(3)
+    await message.answer(f"Вам выпало {value}")
+
+
 @dp.message(Command("pay"))
 async def cmd_buy(message: Message):
     sent = await bot.send_invoice(
@@ -52,14 +60,14 @@ async def process_pre_checkout(query: PreCheckoutQuery):
 async def payment_received(message: Message):
     payment = message.successful_payment
     print("charge_id:", payment.telegram_payment_charge_id)
-    
+
     msg_id = invoice_messages.pop(message.from_user.id, None)
     if msg_id:
         try:
             await bot.delete_message(chat_id=message.chat.id, message_id=msg_id)
         except Exception as e:
             print(f"Не удалось удалить сообщение со счётом: {e}")
-    
+
     await message.answer("successful payment")
 
 
