@@ -3,8 +3,6 @@ import logging
 import os
 import threading
 import json
-import random
-from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -107,7 +105,7 @@ class ChatStates(StatesGroup):
 
 def profile_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Купить токены", callback_data="buy_tokens")]
+        [InlineKeyboardButton(text="💳 купить токены", callback_data="buy_tokens")]
     ])
 
 def prices_keyboard():
@@ -117,7 +115,7 @@ def prices_keyboard():
             text=f"{tokens} токенов — {stars}⭐",
             callback_data=f"buy_{tokens}_{stars}"
         )])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_profile")])
+    buttons.append([InlineKeyboardButton(text="◀️ назад", callback_data="back_to_profile")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ============================================================
@@ -129,21 +127,21 @@ async def cmd_start(message: Message):
     await message.answer(
         "Привет! Я бот-психолог.\n\n"
         "Команды:\n"
-        "/profile — твой профиль и баланс токенов\n"
+        "/account — твой профиль и баланс токенов\n"
         "/information — информация о боте\n\n"
-        "Просто напиши мне что-нибудь, и я отвечу. Одно сообщение = один токен."
+        "Просто напиши мне что-нибудь, и я отвечу. 1 сообщение - один токен."
     )
 
 @dp.message(Command("information"))
 async def cmd_information(message: Message):
     await message.answer(
-        "Этот бот — AI-психолог.\n\n"
-        "Одно сообщение = 1 токен.\n"
-        "Купить токены можно в /profile.\n\n"
+        "Ваш личный психолог. Поговорим обо всём!\n\n"
+        "1 сообщение - 1 токен.\n"
+        "Купить токены можно в /account.\n\n"
         "⚠️ Бот не заменяет живого специалиста. В кризисной ситуации обратись на горячую линию психологической помощи."
     )
 
-@dp.message(Command("profile"))
+@dp.message(Command("account"))
 async def cmd_profile(message: Message, state: FSMContext):
     user_id = message.from_user.id
     data = load_user(user_id)
@@ -153,7 +151,7 @@ async def cmd_profile(message: Message, state: FSMContext):
         f"👤 Имя: {message.from_user.full_name}\n"
         f"🆔 ID: {user_id}\n"
         f"🪙 Токенов: {tokens}\n\n"
-        f"Одно сообщение = 1 токен."
+        f"1 сообщение - 1 токен."
     )
     await message.answer(text, reply_markup=profile_keyboard())
     await state.clear()
@@ -166,7 +164,7 @@ async def cmd_profile(message: Message, state: FSMContext):
 async def cb_buy_tokens(callback: CallbackQuery):
     await callback.answer()
     await callback.message.edit_text(
-        "Выбери пакет токенов:",
+        "Выберите пакет токенов:",
         reply_markup=prices_keyboard()
     )
 
@@ -181,7 +179,7 @@ async def cb_select_package(callback: CallbackQuery):
     await callback.bot.send_invoice(
         chat_id=callback.from_user.id,
         title=f"{tokens} токенов",
-        description=f"Пакет токенов для общения с ботом",
+        description=f"Пакет токенов для общения",
         payload=f"tokens_{tokens}",
         currency="XTR",
         prices=[LabeledPrice(label=f"{tokens} токенов", amount=stars)],
@@ -201,7 +199,7 @@ async def cb_back_to_profile(callback: CallbackQuery):
         f"👤 Имя: {callback.from_user.full_name}\n"
         f"🆔 ID: {user_id}\n"
         f"🪙 Токенов: {tokens}\n\n"
-        f"Одно сообщение = 1 токен."
+        f"1 сообщение - 1 токен."
     )
     await callback.bot.send_message(user_id, text, reply_markup=profile_keyboard())
 
@@ -226,7 +224,7 @@ async def payment_received(message: Message):
         save_user(user_id, data)
 
         text = (
-            f"✅ Оплата прошла!\n"
+            f"✅ Оплата успешна!\n"
             f"Начислено: {tokens_to_add} токенов\n"
             f"Текущий баланс: {data['tokens']}\n\n"
             f"👤 {message.from_user.full_name}\n"
@@ -261,7 +259,7 @@ async def handle_message(message: Message, state: FSMContext):
     if data["tokens"] <= 0:
         await message.answer(
             "❌ У тебя закончились токены.\n\n"
-            "Пополни баланс в /profile, чтобы продолжить общение."
+            "Пополни баланс в /account, чтобы продолжить общение."
         )
         return
 
@@ -292,13 +290,13 @@ async def handle_message(message: Message, state: FSMContext):
 # МЕНЮ КОМАНД
 # ============================================================
 
-async def set_commands():
-    commands = [
-        BotCommand(command="start", description="Начать"),
-        BotCommand(command="profile", description="Профиль и токены"),
-        BotCommand(command="information", description="Информация"),
+async def set_main_menu(bot: Bot):
+    main_menu_commands = [
+        BotCommand(command="start", description="начать"),
+        BotCommand(command="account", description="аккаунт и токены"),
+        BotCommand(command="information", description="информация"),
     ]
-    await bot.set_my_commands(commands)
+    await bot.set_my_commands(main_menu_commands)
 
 # ============================================================
 # ЗАПУСК
@@ -307,7 +305,7 @@ async def set_commands():
 async def main():
     logging.basicConfig(level=logging.INFO)
     threading.Thread(target=run_flask, daemon=True).start()
-    await set_commands()
+    await set_main_menu(bot)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
