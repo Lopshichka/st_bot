@@ -29,12 +29,11 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    dice_message = await message.answer_dice(emoji="🎲")
-    value = dice_message.dice.value
-    await asyncio.sleep(3)
-    await message.answer(f"Вам выпало {value}")
+@dp.message(F.dice)
+async def handle_user_dice(message: Message):
+    value = message.dice.value
+    emoji = message.dice.emoji
+    await message.answer(f"Вы выкинули {emoji} со значением {value}")
 
 
 @dp.message(Command("pay"))
