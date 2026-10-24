@@ -51,6 +51,9 @@ PRICES = [
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
 # ============================================================
 # ХРАНИЛИЩЕ (JSON-файлы)
 # ============================================================
