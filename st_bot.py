@@ -14,7 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from flask import Flask
 from cryptography.fernet import Fernet
-
+#
 # ============================================================
 # КОНФИГ
 # ============================================================
