@@ -3,6 +3,8 @@ import logging
 import os
 import threading
 import json
+import base64
+import aiohttp
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -14,7 +16,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from flask import Flask
 from cryptography.fernet import Fernet
-#
+
 # ============================================================
 # КОНФИГ
 # ============================================================
@@ -23,19 +25,23 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("Не найден BOT_TOKEN")
 
-# Ключ шифрования (один раз сгенерируй и сохрани в Render Environment!)
-# from cryptography.fernet import Fernet
-# print(Fernet.generate_key().decode())
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY")
 if not ENCRYPTION_KEY:
     raise ValueError("Не найден ENCRYPTION_KEY")
 
 cipher = Fernet(ENCRYPTION_KEY.encode())
 
-# Промт для нейросети (ЗАПОЛНИ САМ)
+# Настройки AI (OpenRouter)
+AI_API_URL = os.environ.get("AI_API_URL", "https://openrouter.ai/api/v1/chat/completions")
+AI_MODEL = os.environ.get("AI_MODEL", "openrouter/free")
+AI_API_KEY = os.environ.get("AI_API_KEY")
+
+# Настройки GitHub (для сохранения истории)
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_REPO = os.environ.get("GITHUB_REPO")  # например, "Lopshichka/st_bot"
+
 SYSTEM_PROMPT = "Ты — эмпатичный психолог. Слушай пользователя, задавай уточняющие вопросы, помогай разобраться в проблеме. Отвечай тепло и по делу."
 
-# Прайсы: (токены, звёзды)
 PRICES = [
     (10, 5),
     (30, 13),
@@ -45,7 +51,6 @@ PRICES = [
     (500, 230),
 ]
 
-# Путь к папке с зашифрованными историями
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -53,7 +58,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ============================================================
-# ХРАНИЛИЩЕ (JSON-файлы)
+# ХРАНИЛИЩЕ (JSON-файлы + GitHub)
 # ============================================================
 
 def user_file(user_id: int) -> str:
@@ -71,12 +76,54 @@ def load_user(user_id: int) -> dict:
     except Exception:
         return {"tokens": 0, "history": []}
 
+async def save_user_to_github(user_id: int, encrypted_data: bytes):
+    """Сохраняет зашифрованный файл в GitHub через Contents API."""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return  # GitHub не настроен, просто пропускаем
+
+    file_path = f"data/user_{user_id}.json"
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    async with aiohttp.ClientSession() as session:
+        # 1. Проверяем, существует ли файл (нужно для получения sha при обновлении)
+        async with session.get(url, headers=headers) as resp:
+            sha = None
+            if resp.status == 200:
+                data = await resp.json()
+                sha = data.get("sha")
+
+        # 2. Создаём или обновляем файл
+        payload = {
+            "message": f"update history for user {user_id}",
+            "content": base64.b64encode(encrypted_data).decode("utf-8"),
+        }
+        if sha:
+            payload["sha"] = sha
+
+        async with session.put(url, headers=headers, json=payload) as resp:
+            if resp.status not in (200, 201):
+                logging.error(f"GitHub save failed: {resp.status} {await resp.text()}")
+
 def save_user(user_id: int, data: dict):
+    """Сохраняет локально и запускает фоновое сохранение в GitHub."""
     path = user_file(user_id)
     raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
     encrypted = cipher.encrypt(raw)
     with open(path, "wb") as f:
         f.write(encrypted)
+
+    # Запускаем сохранение в GitHub асинхронно (не блокируем ответ)
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(save_user_to_github(user_id, encrypted))
+    except RuntimeError:
+        # Если event loop не запущен (например, при старте), сохраняем синхронно позже
+        pass
 
 # ============================================================
 # FLASK (для Render)
@@ -91,6 +138,43 @@ def health():
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
+# ============================================================
+# ВЫЗОВ AI
+# ============================================================
+
+async def ask_ai(history: list) -> str:
+    """Отправляет историю диалога в OpenRouter и возвращает ответ."""
+    if not AI_API_KEY:
+        return "[Ошибка] AI_API_KEY не настроен. Добавь его в Render Environment."
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+
+    headers = {
+        "Authorization": f"Bearer {AI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": AI_MODEL,
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 1000,
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(AI_API_URL, headers=headers, json=payload, timeout=60) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logging.error(f"AI API error: {resp.status} {error_text}")
+                    return f"[Ошибка AI] Сервис вернул код {resp.status}. Попробуй позже."
+                data = await resp.json()
+                return data["choices"][0]["message"]["content"]
+    except asyncio.TimeoutError:
+        return "[Ошибка AI] Превышено время ожидания. Попробуй ещё раз."
+    except Exception as e:
+        logging.error(f"AI request failed: {e}")
+        return "[Ошибка AI] Не удалось получить ответ. Попробуй позже."
 
 # ============================================================
 # FSM
@@ -119,7 +203,7 @@ def prices_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ============================================================
-# /start И /profile
+# /start, /information, /account
 # ============================================================
 
 @dp.message(Command("start"))
@@ -241,7 +325,7 @@ async def handle_message(message: Message, state: FSMContext):
     user_id = message.from_user.id
     text = message.text
 
-    # Проверка на кризисные сообщения (ОБЯЗАТЕЛЬНО)
+    # Проверка на кризисные сообщения
     crisis_words = ["суицид", "убить себя", "не хочу жить", "покончить", "самоубий"]
     if any(w in text.lower() for w in crisis_words):
         await message.answer(
@@ -252,10 +336,8 @@ async def handle_message(message: Message, state: FSMContext):
         )
         return
 
-    # Загружаем данные пользователя
     data = load_user(user_id)
 
-    # Проверка токенов ДО обращения к API
     if data["tokens"] <= 0:
         await message.answer(
             "❌ У тебя закончились токены.\n\n"
@@ -263,24 +345,16 @@ async def handle_message(message: Message, state: FSMContext):
         )
         return
 
-    # Списываем токен
     data["tokens"] -= 1
-
-    # Добавляем сообщение в историю
     data["history"].append({"role": "user", "content": text})
 
-    # Ограничиваем историю (последние 100 сообщений)
     if len(data["history"]) > 100:
         data["history"] = data["history"][-100:]
 
-    save_user(user_id, data)
+    # Отправляем запрос к AI
+    await message.answer("⏳ Думаю над ответом...")
+    ai_response = await ask_ai(data["history"])
 
-    # ЗАГЛУШКА: здесь будет вызов API нейросети
-    # Пока просто эхо-ответ
-    ai_response = f"[Заглушка] Ты написал: {text}. Здесь будет ответ нейросети."
-
-    # Сохраняем ответ в историю
-    data = load_user(user_id)
     data["history"].append({"role": "assistant", "content": ai_response})
     save_user(user_id, data)
 
