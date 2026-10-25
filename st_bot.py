@@ -36,7 +36,7 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
 # Настройки AI (OpenRouter)
 AI_API_URL = os.environ.get("AI_API_URL", "https://openrouter.ai/api/v1/chat/completions")
-AI_MODEL = os.environ.get("AI_MODEL", "openrouter/free")
+AI_MODEL = os.environ.get("AI_MODEL", "google/gemma-4-31b-it:free")
 AI_API_KEY = os.environ.get("AI_API_KEY")
 
 # Настройки GitHub (для сохранения истории)
