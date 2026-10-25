@@ -31,6 +31,8 @@ if not ENCRYPTION_KEY:
 
 cipher = Fernet(ENCRYPTION_KEY.encode())
 
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+
 # Настройки AI (OpenRouter)
 AI_API_URL = os.environ.get("AI_API_URL", "https://openrouter.ai/api/v1/chat/completions")
 AI_MODEL = os.environ.get("AI_MODEL", "openrouter/free")
@@ -56,6 +58,31 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+@dp.message(Command("tokens"), F.from_user.id == ADMIN_ID)
+async def cmd_tokens(message: Message):
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer("Формат: /tokens [id] [количество]")
+        return
+
+    try:
+        target_id = int(parts[1])
+        amount = int(parts[2])
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("ID и количество должны быть положительными числами.")
+        return
+
+    data = load_user(target_id)
+    data["tokens"] += amount
+    save_user(target_id, data)
+
+    await message.answer(
+        f"пользователю {target_id} начислено {amount} токенов.\n"
+        f"Текущий баланс: {data['tokens']}"
+    )
 
 # ============================================================
 # ХРАНИЛИЩЕ (JSON-файлы + GitHub)
