@@ -452,9 +452,16 @@ async def handle_message(message: Message, state: FSMContext):
         return
 
     info["tokens"] -= 1
-    save_user_info(user_id, info)
+    try:
+        save_user_info(user_id, info)
+    except Exception as e:
+        logging.error(f"save_user_info failed: {e}")
 
-    history = load_user_history(user_id)
+    try:
+        history = load_user_history(user_id)
+    except Exception as e:
+        logging.error(f"load_user_history failed: {e}")
+        history = []
     history.append({"role": "user", "content": text})
     if len(history) > 100:
         history = history[-100:]
