@@ -250,9 +250,10 @@ def run_flask():
 # AI
 # ============================================================
 
-async def ask_ai(history: list) -> str:
+async def ask_ai(history: list) -> tuple[str, bool]:
     if not AI_API_KEY:
-        return "[Ошибка] AI_API_KEY не настроен."
+        return "[Ошибка] AI_API_KEY не настроен.", True
+
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
     headers = {
         "Authorization": f"Bearer {AI_API_KEY}",
@@ -264,21 +265,22 @@ async def ask_ai(history: list) -> str:
         "temperature": 0.7,
         "max_tokens": 1000,
     }
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(AI_API_URL, headers=headers, json=payload, timeout=60) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logging.error(f"AI API error: {resp.status} {error_text}")
-                    return f"Я сплю и вижу {resp.status} овечек, напиши мне позже.."
+                    return f"Я сплю и вижу {resp.status} овечек, напиши мне позже..", True
                 data = await resp.json()
-                return data["choices"][0]["message"]["content"]
+                return data["choices"][0]["message"]["content"], False
     except asyncio.TimeoutError:
-        logging.error(f"AI TimedoutError")
-        return "что-то я зависла.. напиши мне позже.."
+        logging.error("AI TimeoutError")
+        return "что-то я зависла.. напиши мне позже..", True
     except Exception as e:
         logging.error(f"AI request failed: {e}")
-        return "ой, у меня что-то замкнуло.. напиши мне позже.."
+        return "ой, у меня что-то замкнуло.. напиши мне позже..", True
 
 # ============================================================
 # КЛАВИАТУРЫ
@@ -447,38 +449,33 @@ async def handle_message(message: Message, state: FSMContext):
 
     info = get_user_info(user_id)
     if info["tokens"] <= 0:
-        await message.answer("у тебя закончились токены\n\nпополни баланс в /account, чтобы мы могли общаться дальше")
+        await message.answer("у тебя закончились токены\n\nпополни баланс в /account, для продолжения общения")
         return
 
     info["tokens"] -= 1
-    try:
-        save_user_info(user_id, info)
-    except Exception as e:
-        logging.error(f"save_user_info failed: {e}")
+    save_user_info(user_id, info)
 
-    try:
-        history = load_user_history(user_id)
-    except Exception as e:
-        logging.error(f"load_user_history failed: {e}")
-        history = []
+    history = load_user_history(user_id)
     history.append({"role": "user", "content": text})
-    if len(history) > 100:
-        history = history[-100:]
+    if len(history) > 200:
+        history = history[-200:]
 
-    thinking_phrases = [
-        "печатаю..",
-        "тыкаю по клавишам..",
-        "пишу..",
-        "сейчас отвечу..",
-        "секундочку..",
-        "щас-щас..",
-        "уже строчу..",
-        "подожди чуть-чуть..",
-        "одну секунду..",
-        "собираюсь с мыслями..",
-    ]
+    thinking_phrases = ["печатаю..", "тыкаю по клавишам..", "пишу..", "сейчас отвечу..", "секундочку..", "щас-щас..", "уже строчу..", "подожди чуть-чуть..", "одну секунду.."]
     thinking_msg = await message.answer(random.choice(thinking_phrases))
-    ai_response = await ask_ai(history)
+    ai_response, is_error = await ask_ai(history)
+
+    if is_error:
+        info = get_user_info(user_id)
+        info["tokens"] += 1
+        save_user_info(user_id, info)
+
+        try:
+            await thinking_msg.delete()
+        except Exception as e:
+            logging.error(f"не удалось удалить сообщение: {e}")
+
+        await message.answer(ai_response)
+        return
 
     history.append({"role": "assistant", "content": ai_response})
     save_user_history(user_id, history)
@@ -489,7 +486,7 @@ async def handle_message(message: Message, state: FSMContext):
         logging.error(f"не удалось удалить сообщение: {e}")
 
     await message.answer(ai_response)
-
+    
 # ============================================================
 # АДМИН
 # ============================================================
