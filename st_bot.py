@@ -208,9 +208,13 @@ async def load_all_users_from_github():
                     continue
                 async with session.get(file["download_url"]) as r:
                     if r.status == 200:
-                        info = await r.json()
-                        users_cache[user_id] = info
-                        logging.info(f"Загружен пользователь {user_id}: {info}")
+                        try:
+                            raw_text = await r.text()
+                            info = json.loads(raw_text)
+                            users_cache[user_id] = info
+                            logging.info(f"Загружен пользователь {user_id}: {info}")
+                        except Exception as e:
+                            logging.error(f"Не удалось загрузить {name}: {e}")
 
 # ============================================================
 # АНТИСПАМ
