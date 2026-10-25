@@ -78,7 +78,7 @@ users_cache = {}
 
 # Антиспам: user_id -> timestamp последнего запроса
 last_request_time = {}
-ANTISPAM_SECONDS = 3
+ANTISPAM_SECONDS = 2
 
 # ============================================================
 # ХРАНИЛИЩЕ
