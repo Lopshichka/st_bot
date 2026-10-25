@@ -270,14 +270,15 @@ async def ask_ai(history: list) -> str:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logging.error(f"AI API error: {resp.status} {error_text}")
-                    return f"[Ошибка AI] Сервис вернул код {resp.status}. Попробуй позже."
+                    return f"Я сплю и вижу {resp.status} овечек, напиши мне позже.."
                 data = await resp.json()
                 return data["choices"][0]["message"]["content"]
     except asyncio.TimeoutError:
-        return "[Ошибка AI] Превышено время ожидания."
+        logging.error(f"AI TimedoutError")
+        return "что-то я зависла.. напиши мне позже.."
     except Exception as e:
         logging.error(f"AI request failed: {e}")
-        return "[Ошибка AI] Не удалось получить ответ."
+        return "ой, у меня что-то замкнуло.. напиши мне позже.."
 
 # ============================================================
 # КЛАВИАТУРЫ
