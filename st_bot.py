@@ -91,7 +91,6 @@ def user_info_file(user_id: int) -> str:
     return os.path.join(USERS_INFO_DIR, f"user_{user_id}.json")
 
 def load_user_history(user_id: int) -> list:
-    """Загружает зашифрованную историю диалога."""
     path = user_history_file(user_id)
     if not os.path.exists(path):
         return []
@@ -99,7 +98,10 @@ def load_user_history(user_id: int) -> list:
         with open(path, "rb") as f:
             encrypted = f.read()
         decrypted = cipher.decrypt(encrypted)
-        return json.loads(decrypted.decode("utf-8"))
+        data = json.loads(decrypted.decode("utf-8"))
+        if isinstance(data, list):
+            return data
+        return []
     except Exception:
         return []
 
