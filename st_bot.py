@@ -5,6 +5,7 @@ import threading
 import json
 import base64
 import aiohttp
+import random
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -344,7 +345,7 @@ async def payment_received(message: Message):
         await message.answer(text, reply_markup=profile_keyboard())
 
 # ============================================================
-# ОБРАБОТКА СООБЩЕНИЙ (ПСИХОЛОГ)
+# ОБРАБОТКА СООБЩЕНИЙ
 # ============================================================
 
 @dp.message(F.text & ~F.text.startswith("/"))
@@ -367,8 +368,8 @@ async def handle_message(message: Message, state: FSMContext):
 
     if data["tokens"] <= 0:
         await message.answer(
-            "❌ У тебя закончились токены.\n\n"
-            "Пополни баланс в /account, чтобы продолжить общение."
+            "у тебя закончились токены\n\n"
+            "пополни баланс в /account, для продолжения общения"
         )
         return
 
@@ -378,12 +379,27 @@ async def handle_message(message: Message, state: FSMContext):
     if len(data["history"]) > 100:
         data["history"] = data["history"][-100:]
 
-    # Отправляем запрос к AI
-    await message.answer("⏳ Думаю над ответом...")
+    # Случайная фраза вместо "Думаю над ответом"
+    thinking_phrases = [
+        "⏳ размышляю...",
+        "💭 думаю...",
+        "🧠 анализирую...",
+        "✍️ формулирую мысль...",
+        "🌿 собираюсь с мыслями...",
+        "💬 подбираю слова...",
+        "🔍 вникаю в суть...",
+        "🫂 слушаю тебя...",
+    ]
+    thinking_msg = await message.answer(random.choice(thinking_phrases))
     ai_response = await ask_ai(data["history"])
 
     data["history"].append({"role": "assistant", "content": ai_response})
     save_user(user_id, data)
+
+    try:
+        await thinking_msg.delete()
+    except Exception as e:
+        logging.error(f"не удалось удалить сообщение: {e}")
 
     await message.answer(ai_response)
 
